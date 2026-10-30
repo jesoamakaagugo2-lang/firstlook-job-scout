@@ -17,3 +17,26 @@ Authoritative October tracker: libfile_dfdd33c3255081919b697aeef76ea59f. Read th
 
 ## Verification
 TypeScript check; Sites build; schema migration; browser visual and navigation checks; authenticated writer POST/readback; idempotent replay. Run routine scans as data writes without republishing.
+
+
+## Deploy this repository in your Cloudflare account
+
+The original Sites deployment and its hourly automation remain independent. This target does not inherit its data, sign-in session, or updater authorization.
+
+Cloudflare Workers Builds settings:
+- Project name: `firstlook-job-scout`
+- Production branch: `main`
+- Build command: `pnpm run build:cloudflare`
+- Deploy command: `pnpm run deploy:cloudflare`
+- Root directory: repository root
+- Disable preview builds during initial setup. Protect all traffic with Cloudflare Access and choose the Cloudflare account policy, session duration 24 hours.
+
+The deploy script applies schema migrations to the explicitly configured D1 database before deploying the built Worker. It does not import application records, delete records or create a recurring scout.
+
+The `DB` binding uses `firstlook-db`, database ID `2ee2930e-828b-41be-b59f-6ceed95f5570`. No credentials are stored in source.
+
+The owner allowlist is `jesoamakaagugo2@gmail.com`. The Worker accepts Cloudflare's platform-verified Access identity when supplied. Workers with Static Assets may not receive that context, so the Worker also supports strict Access JWT verification. Configure the non-secret runtime variables `TEAM_DOMAIN` (your full `https://<team>.cloudflareaccess.com` origin) and `POLICY_AUD` (the Access application's audience tag). Missing verification settings return a setup message without serving workspace data. Variables added in the dashboard are retained on later code deployments via `keep_vars`.
+
+After publishing, verify anonymous access is blocked and the owner can open the desk; import existing reports and history through the protected API and verify readback. Only then connect a supported unattended writer to this Worker and update the existing hourly task to use it. Do not add a public write endpoint or copy the old Sites bypass token: it authorizes only the original Site. Service-token identity authorization is not yet implemented for this target. Until that migration is verified, the existing task continues updating the original private Site.
+
+Checks: `node --test tests/cloudflare-access.test.mjs`; `pnpm run build:cloudflare`.
