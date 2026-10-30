@@ -1,0 +1,66 @@
+name: Firstlook protected scout relay
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: firstlook-relay-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  relay:
+    if: github.event.repository.private == true && github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, '[Firstlook scout]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          SCOUT_REPORT_TOKEN: ${{ secrets.SCOUT_REPORT_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        with:
+          script: |
+            const target = 'https://firstlook-job-scout.jesoamakaagugo2.workers.dev/api/report';
+            const post = body => github.rest.issues.createComment({...context.repo, issue_number: context.issue.number, body});
+            try {
+              if (!process.env.SCOUT_REPORT_TOKEN) throw new Error('GitHub Actions secret SCOUT_REPORT_TOKEN is not configured');
+              const input = JSON.parse(context.payload.issue.body || '{}');
+              if (!['state', 'report', 'verify'].includes(input.kind)) throw new Error('kind must be state, report or verify');
+              if (input.kind === 'report' && (!input.report || !input.report.runId)) throw new Error('A report with a stable runId is required');
+              const headers = {'Authorization':'Bearer '+process.env.SCOUT_REPORT_TOKEN};
+              if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
+                headers['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
+                headers['CF-Access-Client-Secret'] = process.env.CF_ACCESS_CLIENT_SECRET;
+              }
+              async function call(report) {
+                const response = await fetch(target, {method:report?'POST':'GET',headers:{...headers,'Content-Type':'application/json'},body:report?JSON.stringify(report):undefined,redirect:'error',signal:AbortSignal.timeout(45000)});
+                if (!response.ok) throw new Error('Cloudflare report endpoint returned HTTP '+response.status);
+                if (!(response.headers.get('content-type')||'').includes('application/json')) throw new Error('Endpoint did not return JSON; check Cloudflare Access policy');
+                return response.json();
+              }
+              let saved;
+              if (input.kind === 'report') saved = await call(input.report);
+              const state = await call();
+              if (input.kind === 'report') {
+                const report = state.reports.find(r=>r.id===input.report.runId);
+                if (!report) throw new Error('POST succeeded but GET did not contain the report');
+                await post('FIRSTLOOK_READBACK_VERIFIED\n```json\n'+JSON.stringify({report,historyCount:state.history.length,jobsCount:state.jobs.length,migration:state.migration,system:state.system})+'\n```');
+              } else if (input.kind === 'verify') {
+                const response = await fetch('https://firstlook-job-scout.jesoamakaagugo2.workers.dev/api/report',{redirect:'manual'});
+                const anonymousBlocked=response.status===401||response.status===403||response.status===302;
+                if (!anonymousBlocked) throw new Error('Anonymous endpoint access was not blocked');
+                await post('FIRSTLOOK_CONNECTION_VERIFIED\n```json\n'+JSON.stringify({anonymousBlocked,historyCount:state.history.length,jobsCount:state.jobs.length,reportCount:state.reports.length,lastScan:state.reports[0]?.at,migration:state.migration,system:state.system})+'\n```');
+              } else {
+                // Transport snapshot only. D1 remains authoritative; request a new state each run.
+                const snapshot={...state,history:state.history.map(({originalTrackerRow,resume,...h})=>h)};
+                const text=JSON.stringify(snapshot);const size=12000;const parts=Math.ceil(text.length/size);
+                for(let i=0;i<parts;i++)await post('FIRSTLOOK_STATE_PART '+(i+1)+'/'+parts+'\n'+text.slice(i*size,(i+1)*size));
+              }
+              await github.rest.issues.update({...context.repo,issue_number:context.issue.number,state:'closed'});
+            } catch (error) {
+              // Never include response bodies, request headers or credential values in logs/comments.
+              const message=error.message?.startsWith('Cloudflare report endpoint returned HTTP ')||error.message?.startsWith('GitHub Actions secret ')||error.message?.startsWith('Endpoint did not return JSON')||error.message?.startsWith('POST succeeded')||error.message?.startsWith('Anonymous endpoint')?error.message:'Relay failed; inspect the workflow configuration';
+              await post('FIRSTLOOK_RELAY_FAILED: '+message);
+              core.setFailed(message);
+            }

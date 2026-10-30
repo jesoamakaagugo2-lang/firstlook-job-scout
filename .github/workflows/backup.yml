@@ -1,0 +1,36 @@
+name: Firstlook weekly D1 data backup
+on:
+  schedule:
+    - cron: '15 2 * * 0'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backup:
+    if: github.event.repository.private == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Export protected D1 workspace data
+        env:
+          SCOUT_REPORT_TOKEN: ${{ secrets.SCOUT_REPORT_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          node --input-type=module <<'JS'
+          import {writeFile} from 'node:fs/promises';
+          if(!process.env.SCOUT_REPORT_TOKEN)throw Error('Configure SCOUT_REPORT_TOKEN before enabling backups');
+          const headers={Authorization:'Bearer '+process.env.SCOUT_REPORT_TOKEN};
+          if(process.env.CF_ACCESS_CLIENT_ID&&process.env.CF_ACCESS_CLIENT_SECRET){headers['CF-Access-Client-Id']=process.env.CF_ACCESS_CLIENT_ID;headers['CF-Access-Client-Secret']=process.env.CF_ACCESS_CLIENT_SECRET;}
+          const r=await fetch('https://firstlook-job-scout.jesoamakaagugo2.workers.dev/api/report?backup=1',{headers,redirect:'error'});
+          if(!r.ok)throw Error('Backup failed: HTTP '+r.status);
+          const data=await r.json();
+          if(!Array.isArray(data.entries))throw Error('Invalid backup response');
+          await writeFile('firstlook-backup.json',JSON.stringify(data));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firstlook-d1-backup-${{ github.run_id }}
+          path: firstlook-backup.json
+          retention-days: 30
+          if-no-files-found: error
