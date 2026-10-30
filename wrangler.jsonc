@@ -17,7 +17,9 @@
     }
   ],
   "vars": {
-    "OWNER_EMAIL": "jesoamakaagugo2@gmail.com"
+    "OWNER_EMAIL": "jesoamakaagugo2@gmail.com",
+    "TEAM_DOMAIN": "https://jesoamakaagugo2.cloudflareaccess.com",
+    "POLICY_AUD": "305419ced665e5203ded61a484a4b1e60e2b61951fb7fa7ef310448ad45864dd"
   },
   "observability": {
     "enabled": true
