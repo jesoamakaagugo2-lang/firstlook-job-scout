@@ -1,0 +1,2 @@
+import {getDb} from '../../../db';import {entries} from '../../../db/schema';
+export async function POST(req:Request){const {id,status}=await req.json() as any;if(!id||!['saved','applied','rejected','dismissed','new'].includes(status))return Response.json({error:'Invalid status'},{status:400});const payload=JSON.stringify({status,at:new Date().toISOString()});await getDb().insert(entries).values({id:'status:'+id,kind:'status',payload,created:new Date().toISOString()}).onConflictDoUpdate({target:entries.id,set:{payload}});return Response.json({ok:true});}
